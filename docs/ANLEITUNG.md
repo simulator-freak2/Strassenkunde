@@ -38,8 +38,25 @@ Einstellungen und Lernstand.
       außerhalb mitgeladen werden – Wege dürfen kurz durch Nachbarorte führen.
    2. *Kartendaten herunterladen* (Internet nur hierfür nötig, danach
       offline). Ein Landkreis kann einige Minuten dauern.
+      Sind die Kartenserver überlastet, kann der Download lange dauern. Er
+      lässt sich jederzeit erneut starten – bereits geladene Teile werden
+      übersprungen.
    3. *Gerätehaus*: per Adresssuche, Koordinaten (`50.1234, 8.5678`) oder
       durch Antippen auf der Karte festlegen.
+
+## Kartendatei laden/speichern
+
+Unter *Gebiet & Startpunkt → 2. Kartendaten* gibt es
+
+- **Kartendatei speichern** – die geladene Karte als Datei (`.json.gz`)
+  ablegen, z. B. auf dem USB-Stick,
+- **Kartendatei laden** – eine solche Datei übernehmen, ganz ohne
+  Internet.
+
+So muss die Karte nur einmal heruntergeladen werden und kann dann auf
+weitere Geräte (z. B. das Android-Handy) übertragen werden. Für Ingelheim am
+Rhein liegt eine fertige Datei im Repository unter
+`karten/karte-Ingelheim-am-Rhein.json.gz`.
 
 ## Üben
 

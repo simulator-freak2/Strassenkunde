@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -116,6 +117,21 @@ void main() {
       expect(s.profile.trainedTasks, 5);
     });
   }
+
+  test('Kartendatei importieren (gültig und ungültig)', () async {
+    final s = makeSession(ClosureLevel.none);
+    final dir = Directory.systemTemp.createTempSync('sk_imp');
+    final f = File('${dir.path}/k.json.gz');
+    encodeGraphFile(buildFixture(), f.path);
+    final g = await s.storage.importGraph(s.profile, f.readAsBytesSync());
+    expect(g.edgeCount, 60);
+    expect(s.storage.graphFile(s.profile).existsSync(), isTrue);
+    await expectLater(
+        s.storage.importGraph(s.profile, Uint8List.fromList([1, 2, 3])),
+        throwsFormatException);
+    // alte Karte bleibt erhalten
+    expect((await s.storage.loadGraph(s.profile))!.edgeCount, 60);
+  });
 
   test('Fahrzeug-Label', () => expect(Vehicle.lkw.label, 'LKW'));
 }

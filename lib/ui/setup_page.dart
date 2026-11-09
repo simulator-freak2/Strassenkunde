@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../data/osm_service.dart';
@@ -112,6 +113,74 @@ class _SetupPageState extends State<SetupPage> {
           _progressText = null;
         });
       }
+    }
+  }
+
+  Future<void> _importFile() async {
+    final PlatformFile? f;
+    try {
+      f = await FilePicker.pickFile(dialogTitle: 'Kartendatei laden (.json.gz)');
+    } catch (e) {
+      _snack('Datei konnte nicht geöffnet werden: $e');
+      return;
+    }
+    if (f == null) return;
+    setState(() {
+      _downloading = true;
+      _progressText = 'Lese Kartendatei …';
+      _progress = null;
+    });
+    try {
+      final bytes = await f.readAsBytes();
+      final g = await widget.session.storage.importGraph(_p, bytes);
+      if (_p.areas.isEmpty && g.areaRings.isNotEmpty) {
+        _p.areas = [
+          AreaItem(g.areaNames.isEmpty ? 'Importiertes Gebiet' : g.areaNames.join(', '),
+              'aus Datei', 'datei', 0, g.areaRings)
+        ];
+      }
+      final streets = <int>{
+        for (var e = 0; e < g.edgeCount; e++)
+          if (g.eInArea[e] == 1 && g.eName[e] >= 0) g.eName[e]
+      };
+      _p.dataDate = DateTime.now();
+      _p.dataStreets = streets.length;
+      _p.dataObjects = g.pois.where((x) => x.inArea).length;
+      _p.dataSignature = _p.areaSignature();
+      await widget.session.save();
+      await widget.session.loadGraph();
+      _changedData = true;
+      _fitCounter++;
+      _snack('Kartendatei geladen: ${_p.dataStreets} Straßen, ${_p.dataObjects} Objekte.');
+    } catch (e) {
+      _snack(e is FormatException ? e.message : '$e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _downloading = false;
+          _progressText = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _exportFile() async {
+    final file = widget.session.storage.graphFile(_p);
+    if (!await file.exists()) return;
+    final bytes = await file.readAsBytes();
+    final base = (_p.areas.isEmpty ? _p.name : _p.areas.first.name.split(',').first)
+        .replaceAll(RegExp(r'[^\wäöüÄÖÜß\- ]'), '')
+        .trim()
+        .replaceAll(' ', '-');
+    try {
+      final uri = await FilePicker.saveFile(
+        dialogTitle: 'Kartendatei speichern',
+        fileName: 'karte-$base.json.gz',
+        bytes: bytes,
+      );
+      if (uri != null) _snack('Kartendatei gespeichert.');
+    } catch (e) {
+      _snack('Speichern fehlgeschlagen: $e');
     }
   }
 
@@ -317,12 +386,31 @@ class _SetupPageState extends State<SetupPage> {
         const SizedBox(height: 4),
         const Text('Große Gebiete (Landkreis) können einige Minuten dauern.',
             style: TextStyle(fontSize: 12)),
-      ] else
+      ] else ...[
         FilledButton.icon(
           onPressed: _p.areas.isEmpty ? null : _download,
           icon: const Icon(Icons.cloud_download_outlined),
           label: Text(hasData ? 'Daten neu laden' : 'Daten herunterladen'),
         ),
+        const SizedBox(height: 12),
+        const Text('Oder Kartendatei verwenden – z. B. an einem anderen Gerät '
+            'geladen und per USB-Stick übertragen:',
+            style: TextStyle(fontSize: 12)),
+        const SizedBox(height: 6),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          OutlinedButton.icon(
+            onPressed: _importFile,
+            icon: const Icon(Icons.file_open_outlined),
+            label: const Text('Kartendatei laden'),
+          ),
+          if (hasData)
+            OutlinedButton.icon(
+              onPressed: _exportFile,
+              icon: const Icon(Icons.save_alt),
+              label: const Text('Kartendatei speichern'),
+            ),
+        ]),
+      ],
     ]);
   }
 

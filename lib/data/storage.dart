@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -92,6 +93,25 @@ class Storage {
   Future<void> deleteProfile(Profile pr) async {
     final d = profileDir(pr);
     if (await d.exists()) await d.delete(recursive: true);
+  }
+
+  /// Übernimmt eine Kartendatei (z. B. von einem anderen Gerät). Die Datei
+  /// wird vorher geprüft; bei Fehlern bleibt die bisherige Karte erhalten.
+  Future<RoadGraph> importGraph(Profile pr, Uint8List bytes) async {
+    final target = graphFile(pr);
+    await target.parent.create(recursive: true);
+    final tmp = File('${target.path}.import');
+    await tmp.writeAsBytes(bytes);
+    final path = tmp.path;
+    try {
+      final g = await Isolate.run(() => decodeGraphFile(path));
+      await tmp.rename(target.path);
+      return g;
+    } catch (_) {
+      if (await tmp.exists()) await tmp.delete();
+      throw const FormatException(
+          'Die Datei ist keine gültige Straßenkunde-Kartendatei.');
+    }
   }
 
   Future<RoadGraph?> loadGraph(Profile pr) async {

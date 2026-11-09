@@ -240,9 +240,10 @@ class TaskGenerator {
     }
     final ends = count.entries.where((m) => m.value == 1).map((m) => m.key).toList();
     final crosses = <String>[];
+    final segSet = seg.toSet();
     for (final n in ends) {
       final edgeAt = seg.firstWhere((x) => g.eFrom[x] == n || g.eTo[x] == n);
-      final c = g.crossStreetAt(n, edgeAt);
+      final c = g.crossStreetAt(n, edgeAt) ?? _nearestCross(n, e, segSet);
       if (c != null && !crosses.contains(c)) crosses.add(c);
     }
     final loc = g.eLoc[e] >= 0 ? ' (${g.localities[g.eLoc[e]]})' : '';
@@ -250,7 +251,57 @@ class TaskGenerator {
       return '$street$loc zwischen ${crosses[0]} und ${crosses[1]}';
     }
     if (crosses.length == 1) return '$street$loc, Höhe ${crosses[0]}';
+    // Notfalls nächstgelegene andere Straße als Orientierung nennen
+    final (mla, mlo) = g.edgeMid(seg[seg.length ~/ 2]);
+    String? near;
+    var nearD = 500.0;
+    for (var x = 0; x < g.edgeCount; x++) {
+      final l = g.label(x);
+      if (l == null || l == street) continue;
+      final (la, lo) = g.edgeMid(x);
+      if ((la - mla).abs() > 0.005 || (lo - mlo).abs() > 0.008) continue;
+      final d = distanceM(mla, mlo, la, lo);
+      if (d < nearD) {
+        nearD = d;
+        near = l;
+      }
+    }
+    if (near != null) return '$street$loc, Abschnitt nahe $near';
     return '$street$loc, Teilabschnitt';
+  }
+
+  /// Sucht entlang derselben Straße (weg vom gesperrten Abschnitt) die
+  /// nächste benannte Querstraße – für verständliche Beschreibungen, wenn
+  /// direkt am Abschnittsende nur Zufahrten oder Fahrbahnteilungen liegen.
+  String? _nearestCross(int startNode, int streetEdge, Set<int> exclude) {
+    final dist = <int, double>{startNode: 0};
+    final queue = <int>[startNode];
+    String? best;
+    var bestD = double.infinity;
+    while (queue.isNotEmpty) {
+      queue.sort((a, b) => dist[b]!.compareTo(dist[a]!));
+      final n = queue.removeLast();
+      final d = dist[n]!;
+      if (d > 800 || d >= bestD) break;
+      for (final x in g.edgesAtNode(n)) {
+        if (exclude.contains(x)) continue;
+        final other = g.eFrom[x] == n ? g.eTo[x] : g.eFrom[x];
+        if (_sameStreet(x, streetEdge)) {
+          final nd = d + g.eLength[x];
+          if (nd < (dist[other] ?? double.infinity)) {
+            dist[other] = nd;
+            queue.add(other);
+          }
+        } else if (n != startNode) {
+          final c = g.crossStreetAt(n, streetEdge);
+          if (c != null && d < bestD) {
+            best = c;
+            bestD = d;
+          }
+        }
+      }
+    }
+    return best;
   }
 
   (Closure, Router, RouteResult)? _relevantClosure(
