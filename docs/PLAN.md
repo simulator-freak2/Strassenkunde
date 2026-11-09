@@ -16,7 +16,11 @@ Läuft offline auf **Windows (portabel, auch vom USB-Stick)** und **Android**.
 
 ## Funktionen
 
-1. **Ort einrichten**: Ortsname / Gebiet wählen, Startpunkt per Adresse (Suche) oder Koordinaten (Feuerwehrgerätehaus). Daten herunterladen → danach offline.
+1. **Ort einrichten (komplett in der App, nichts fest einprogrammiert)**:
+   - **Ausrückebereich** wählen über Verwaltungsgrenzen aus OSM: Stadtteil(e), Stadt/Gemeinde, Verbandsgemeinde, Landkreis. Mehrere Gebiete kombinierbar; Ergebnis wird auf der Karte zur Kontrolle angezeigt.
+   - Straßen werden mit einem **Randpuffer** (einstellbar, z. B. 1–3 km) geladen, damit die schnellste Route auch kurz über die Grenze führen darf. Aufgaben/Ziele liegen nur innerhalb des Bereichs.
+   - **Gerätehaus** per Adresssuche oder Koordinaten festlegen (mehrere Standorte möglich); jederzeit änderbar.
+   - Daten einmal herunterladen (große Bereiche wie Landkreise in Kacheln/Teilen) → danach offline. Mehrere Ausrückebereiche als Profile speicherbar.
 2. **Objekte**: wichtige Gebäude aus OSM (Schulen, Kitas, Krankenhäuser, Pflegeheime, Industrie, …) + eigene Objekte per Import (CSV/Excel) oder in der App anlegen.
 3. **Startmodus pro Aufgabe**: „vom letzten Ziel weiter“ oder „neu ab Gerätehaus“.
 4. **Lernmodus leicht**: Nach jedem Schritt werden die möglichen nächsten Straßen angezeigt; sofortiges Feedback.
