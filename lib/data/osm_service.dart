@@ -134,7 +134,7 @@ class OsmService {
   static String _tileQuery(BBox b) {
     final bb = '${b.south},${b.west},${b.north},${b.east}';
     return '''
-[out:json][timeout:180];
+[out:json][timeout:900];
 way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)\$"]($bb)->.roads;
 .roads out body;
 .roads >;
@@ -150,28 +150,69 @@ out center;
 ''';
   }
 
+  int _preferred = 0; // zuletzt erfolgreicher Server
+
+  /// Fragt die Statusseite ab und wartet, bis für diesen Anschluss wieder
+  /// eine Abfrage erlaubt ist (öffentliche Server erlauben nur 2 gleichzeitig).
+  Future<void> _waitForSlot(String endpoint, void Function(String) status) async {
+    final statusUri = Uri.parse(endpoint.replaceFirst('/interpreter', '/status'));
+    for (var i = 0; i < 20; i++) {
+      String text;
+      try {
+        final r = await _client
+            .get(statusUri, headers: {'User-Agent': _userAgent})
+            .timeout(const Duration(seconds: 20));
+        if (r.statusCode != 200) return;
+        text = r.body;
+      } catch (_) {
+        return; // Statusseite nicht verfügbar -> einfach versuchen
+      }
+      if (RegExp(r'\d+ slots? available now').hasMatch(text) ||
+          !text.contains('Rate limit')) {
+        return;
+      }
+      final waits = RegExp(r'in (\d+) seconds')
+          .allMatches(text)
+          .map((m) => int.parse(m.group(1)!))
+          .toList();
+      if (waits.isEmpty) return;
+      final w = waits.reduce((a, b) => a < b ? a : b) + 2;
+      status('Abfrage-Limit des Servers erreicht – warte $w s …');
+      await Future<void>.delayed(Duration(seconds: w.clamp(2, 120)));
+    }
+  }
+
   Future<String> _overpass(String query, void Function(String) status) async {
     Object? lastError;
-    const rounds = 4;
+    const rounds = 3;
     final n = _overpassEndpoints.length;
     for (var attempt = 0; attempt < rounds * n; attempt++) {
-      final endpoint = _overpassEndpoints[attempt % n];
+      final idx = (_preferred + attempt) % n;
+      final endpoint = _overpassEndpoints[idx];
       final host = Uri.parse(endpoint).host;
+      await _waitForSlot(endpoint, status);
+      status('Warte auf Antwort von $host (kann bei ausgelasteten Servern '
+          'einige Minuten dauern) …');
       try {
         final res = await _client
             .post(Uri.parse(endpoint),
                 headers: {'User-Agent': _userAgent},
                 body: {'data': query})
-            .timeout(const Duration(minutes: 4));
+            .timeout(const Duration(minutes: 16));
         final body = utf8.decode(res.bodyBytes, allowMalformed: true);
         final ok = res.statusCode == 200 &&
             body.trimLeft().startsWith('{') &&
             !body.contains('"remark": "runtime error') &&
             !body.contains('"remark": "runtime remark');
-        if (ok) return body;
+        if (ok) {
+          _preferred = idx;
+          return body;
+        }
         lastError = res.statusCode == 200
             ? 'Server-Fehler'
-            : 'HTTP ${res.statusCode}';
+            : res.statusCode == 429
+                ? 'Abfrage-Limit'
+                : 'HTTP ${res.statusCode}';
       } on SocketException catch (e) {
         lastError = e.message;
       } on TimeoutException {
@@ -181,13 +222,11 @@ out center;
       } on HandshakeException catch (e) {
         lastError = e.message;
       }
-      // Erst alle Server kurz nacheinander probieren, danach länger warten.
-      final round = attempt ~/ n;
-      final last = attempt % n == n - 1;
-      final wait = Duration(seconds: last ? 20 * (round + 1) : 3);
       if (attempt == rounds * n - 1) break;
-      status('$host antwortet nicht ($lastError) – '
-          '${last ? 'alle Server ausgelastet, warte ${wait.inSeconds} s' : 'versuche anderen Server'} …');
+      final last = attempt % n == n - 1;
+      final wait = Duration(seconds: last ? 30 * (attempt ~/ n + 1) : 5);
+      status('$host: $lastError – '
+          '${last ? 'alle Server ausgelastet, neuer Versuch in ${wait.inSeconds} s' : 'versuche anderen Server'} …');
       await Future<void>.delayed(wait);
     }
     throw OsmException('Download fehlgeschlagen ($lastError). Die Kartenserver '
@@ -205,11 +244,11 @@ out center;
     if (profile.areas.isEmpty) throw OsmException('Kein Gebiet gewählt.');
     final rings = [for (final a in profile.areas) ...a.rings];
     final areaBox = AreaPolygon(rings).bbox.expanded(profile.bufferM);
-    final tiles = areaBox.tiles(0.05);
+    final tiles = areaBox.tiles(0.1);
     final dir = storage.downloadDir(profile);
     // Abgebrochenen Download fortsetzen, wenn Gebiet unverändert ist.
     final sigFile = File(p.join(dir.path, 'gebiet.txt'));
-    final sig = '${profile.areaSignature()}|${tiles.length}|v2';
+    final sig = '${profile.areaSignature()}|${tiles.length}|v3';
     if (await dir.exists() &&
         (!await sigFile.exists() || await sigFile.readAsString() != sig)) {
       await dir.delete(recursive: true);
