@@ -1,4 +1,5 @@
 import '../core/road_graph.dart';
+import '../core/router.dart';
 import '../core/training.dart';
 
 /// Ein gewähltes Gebiet (Stadtteil, Gemeinde, Landkreis …) mit Umriss.
@@ -34,16 +35,98 @@ class AreaItem {
 }
 
 /// Ausgangspunkt (Feuerwehrgerätehaus).
+/// Ausfahrt des Gerätehauses.
+class StationExit {
+  String label;
+  final double lat, lon;
+  bool main;
+  ExitTurn turn;
+  StationExit(this.label, this.lat, this.lon,
+      {this.main = false, this.turn = ExitTurn.both});
+
+  Map<String, dynamic> toJson() => {
+        'label': label,
+        'lat': lat,
+        'lon': lon,
+        'main': main,
+        'turn': turn.name,
+      };
+
+  factory StationExit.fromJson(Map<String, dynamic> j) => StationExit(
+        j['label'] as String,
+        (j['lat'] as num).toDouble(),
+        (j['lon'] as num).toDouble(),
+        main: j['main'] as bool? ?? false,
+        turn: ExitTurn.values.byName(j['turn'] as String? ?? 'both'),
+      );
+}
+
+/// Ausgangspunkt (Feuerwehrgerätehaus) mit optionalen Ausfahrten.
 class StationPoint {
   final String label;
   final double lat, lon;
-  StationPoint(this.label, this.lat, this.lon);
+  List<StationExit> exits;
 
-  Map<String, dynamic> toJson() => {'label': label, 'lat': lat, 'lon': lon};
+  /// Nebenausfahrten werden nur genutzt, wenn sie mindestens so viele
+  /// Sekunden schneller sind als die Hauptausfahrt.
+  int sideExitPenaltySec;
+
+  StationPoint(this.label, this.lat, this.lon,
+      {List<StationExit>? exits, this.sideExitPenaltySec = 60})
+      : exits = exits ?? [];
+
+  StationExit? get mainExit {
+    for (final x in exits) {
+      if (x.main) return x;
+    }
+    return exits.isEmpty ? null : exits.first;
+  }
+
+  /// Neuer Standort, Ausfahrten und Einstellungen bleiben erhalten.
+  StationPoint copyWith({String? label, double? lat, double? lon}) =>
+      StationPoint(label ?? this.label, lat ?? this.lat, lon ?? this.lon,
+          exits: exits, sideExitPenaltySec: sideExitPenaltySec);
+
+  /// Startpunkt für die Routenberechnung.
+  StartPoint toStart(RoadGraph g) {
+    if (exits.isEmpty) {
+      return StartPoint(g.nearestEdge(lat, lon), lat, lon, label);
+    }
+    final main = mainExit!;
+    final list = [
+      for (final x in exits)
+        StartExit.at(g,
+            label: x.label,
+            stationLat: lat,
+            stationLon: lon,
+            lat: x.lat,
+            lon: x.lon,
+            turn: x.turn,
+            main: identical(x, main),
+            penaltyS: identical(x, main) ? 0 : sideExitPenaltySec.toDouble())
+    ];
+    final mainEdge = list.firstWhere((x) => x.main).edge;
+    return StartPoint(mainEdge, lat, lon, label, exits: list);
+  }
+
+  Map<String, dynamic> toJson() => {
+        'label': label,
+        'lat': lat,
+        'lon': lon,
+        'exits': [for (final x in exits) x.toJson()],
+        'sideExitPenaltySec': sideExitPenaltySec,
+      };
+
   factory StationPoint.fromJson(Map<String, dynamic> j) => StationPoint(
-      j['label'] as String,
-      (j['lat'] as num).toDouble(),
-      (j['lon'] as num).toDouble());
+        j['label'] as String,
+        (j['lat'] as num).toDouble(),
+        (j['lon'] as num).toDouble(),
+        exits: [
+          for (final x in j['exits'] as List? ?? const [])
+            StationExit.fromJson(x as Map<String, dynamic>)
+        ],
+        sideExitPenaltySec: j['sideExitPenaltySec'] as int? ?? 60,
+      );
 }
 
 class ProfileSettings {

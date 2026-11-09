@@ -27,8 +27,6 @@ class Session {
   List<String> get streetLabels => _labels ??= generator!.allStreetLabels();
 
   StartPoint stationStart() {
-    final st = profile.station!;
-    final e = graph!.nearestEdge(st.lat, st.lon);
-    return StartPoint(e, st.lat, st.lon, st.label);
+    return profile.station!.toStart(graph!);
   }
 }

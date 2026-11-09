@@ -314,6 +314,14 @@ class EvaluationView extends StatelessWidget {
       Text('Schnellste Route: ${fmtDuration(task.optimal.timeS)} '
           '(${fmtDistance(task.optimal.lengthM(graph))}, ${v.label})',
           style: theme.textTheme.titleSmall),
+      if (task.start.exitLabelFor(task.optimal) case final exit?)
+        Text('über $exit', style: theme.textTheme.bodySmall),
+      if (ev?.check.route != null &&
+          task.start.exitLabelFor(ev!.check.route!) != null &&
+          task.start.exitLabelFor(ev.check.route!) !=
+              task.start.exitLabelFor(task.optimal))
+        Text('Deine Route startet über ${task.start.exitLabelFor(ev.check.route!)}',
+            style: theme.textTheme.bodySmall),
       if (task.closures.isNotEmpty && task.timeWithoutClosures < task.optimal.timeS - 0.5)
         Text('Ohne Sperrungen: ${fmtDuration(task.timeWithoutClosures)}',
             style: theme.textTheme.bodySmall),
@@ -403,6 +411,10 @@ class TaskMap extends StatelessWidget {
       markers: [
         MapMarker(task.start.lat, task.start.lon, Colors.green.shade700, 'Start',
             Icons.trip_origin),
+        if (task.start.exits.length > 1)
+          for (final x in task.start.exits)
+            MapMarker(x.lat, x.lon, x.main ? Colors.blue.shade800 : Colors.blueGrey,
+                '', Icons.exit_to_app),
         if (showTarget)
           MapMarker(task.target.lat, task.target.lon, Colors.red.shade700,
               task.target.title, Icons.flag),

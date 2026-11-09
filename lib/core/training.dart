@@ -156,7 +156,7 @@ class TaskGenerator {
     final base = Router(g, o.vehicle);
     for (var attempt = 0; attempt < 40; attempt++) {
       final t = _weightedPick(pool, stats, avoid);
-      if (t.edges.contains(start.edge)) continue;
+      if (start.edges.any(t.edges.contains)) continue;
       if (distanceM(start.lat, start.lon, t.lat, t.lon) < 250) continue;
       final opt = base.fastest(start, t);
       if (opt == null || opt.timeS < 45) continue;
@@ -312,13 +312,13 @@ class TaskGenerator {
     for (var i = 1; i < dirs.length - 1; i++) {
       final e = dirs[i] >> 1;
       if (g.label(e) == null || g.eInArea[e] == 0) continue;
-      if (e == start.edge || t.edges.contains(e)) continue;
+      if (start.edges.contains(e) || t.edges.contains(e)) continue;
       cand.add(e);
     }
     cand.shuffle(rng);
     for (final e in cand.take(10)) {
       final seg = _segment(e);
-      if (seg.contains(start.edge) || seg.any(t.edges.contains)) continue;
+      if (seg.any(start.edges.contains) || seg.any(t.edges.contains)) continue;
       final r2 = router.withClosed(seg.toSet());
       final alt = r2.fastest(start, t);
       if (alt == null || alt.timeS < route.timeS + 0.5) continue;
@@ -357,7 +357,7 @@ class TaskGenerator {
       if (out.length >= count) break;
       final seg = _segment(e);
       if (seg.any((x) => onRoute.contains(x) || used.contains(x))) continue;
-      if (seg.contains(start.edge) || seg.any(t.edges.contains)) continue;
+      if (seg.any(start.edges.contains) || seg.any(t.edges.contains)) continue;
       final street = g.label(e)!;
       if (routeStreets.contains(street)) continue;
       routeStreets.add(street);
@@ -396,10 +396,12 @@ class TaskGenerator {
 
     if (alignFrom(0)) return true;
     // Startstraße muss nicht eingegeben werden
-    final startLabel = g.label(task.start.edge);
+    final startLabels = {
+      for (final e in task.start.edges)
+        if (e >= 0 && g.label(e) != null) g.label(e)!
+    };
     return legs.isNotEmpty &&
-        startLabel != null &&
-        legs.first.label == startLabel &&
+        startLabels.contains(legs.first.label) &&
         alignFrom(1);
   }
 

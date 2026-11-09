@@ -44,6 +44,23 @@ Einstellungen und Lernstand.
    3. *Gerätehaus*: per Adresssuche, Koordinaten (`50.1234, 8.5678`) oder
       durch Antippen auf der Karte festlegen.
 
+### Ausfahrten des Gerätehauses (optional)
+
+Unter *4. Ausfahrten* lassen sich die Ausfahrten des Gerätehauses durch
+Antippen auf der Karte festlegen (dort, wo die Ausfahrt auf die Straße
+trifft):
+
+- **Hauptausfahrt** (Stern): wird in der Regel benutzt.
+- **Nebenausfahrten**: werden nur genommen, wenn sie mindestens die
+  eingestellte Zeit (Standard 60 s) schneller sind – z. B. wenn eine Sperrung
+  die Hauptausfahrt blockiert.
+- **Abbiegen** je Ausfahrt: links und rechts, nur rechts oder nur links
+  (Blickrichtung beim Herausfahren).
+
+Ohne Ausfahrten startet die Route an der nächstgelegenen Straße in beide
+Richtungen. In der Auswertung steht, über welche Ausfahrt die schnellste
+Route führt.
+
 ## Kartendatei laden/speichern
 
 Unter *Gebiet & Startpunkt → 2. Kartendaten* gibt es

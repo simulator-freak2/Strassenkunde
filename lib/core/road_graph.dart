@@ -400,6 +400,24 @@ class RoadGraph {
     return best;
   }
 
+  /// Fahrtrichtung (Digitalisierungsrichtung) der Kante an der Stelle, die
+  /// dem Punkt am nächsten liegt.
+  double bearingNear(int e, double lat, double lon) {
+    var best = double.infinity;
+    var bk = eGeomStart[e];
+    final s = eGeomStart[e], t = eGeomStart[e + 1];
+    for (var k = s; k + 1 < t; k++) {
+      final d = pointSegmentDistanceM(
+          lat, lon, gLat[k], gLon[k], gLat[k + 1], gLon[k + 1]);
+      if (d < best) {
+        best = d;
+        bk = k;
+      }
+    }
+    if (t - s < 2) return 0;
+    return bearingDeg(gLat[bk], gLon[bk], gLat[bk + 1], gLon[bk + 1]);
+  }
+
   double _distToEdge(int e, double lat, double lon) {
     var best = double.infinity;
     final s = eGeomStart[e], t = eGeomStart[e + 1];

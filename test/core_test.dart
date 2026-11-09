@@ -184,6 +184,74 @@ void main() {
     expect(p3.trainedTasks, 4);
   });
 
+  group('Ausfahrten des Gerätehauses', () {
+    // Gerätehaus mitten im Block zwischen Birkenweg (Zeile 1) und
+    // Hauptstraße (Zeile 2), Spalte 2..3
+    const sLat = lat0 + 1.5 * dLat, sLon = lon0 + 2.5 * dLon;
+    StationPoint station({int penalty = 60, ExitTurn turn = ExitTurn.both}) =>
+        StationPoint('FGH', sLat, sLon, sideExitPenaltySec: penalty, exits: [
+          StationExit('Haupt Birkenweg', lat0 + dLat, sLon, main: true, turn: turn),
+          StationExit('Neben Hauptstraße', lat0 + 2 * dLat, sLon),
+        ]);
+    Target fichtenweg() {
+      final edges = {
+        for (var c = 0; c < 5; c++) g.nearestEdge(lat0 + 5 * dLat, lon0 + (c + 0.5) * dLon)
+      };
+      return Target(
+          type: TargetType.street,
+          title: 'Fichtenweg',
+          detail: '',
+          key: 'f',
+          lat: lat0 + 5 * dLat,
+          lon: sLon,
+          targetEdge: -1,
+          nodes: {},
+          edges: edges);
+    }
+
+    test('Hauptausfahrt wird bevorzugt, Nebenausfahrt nur wenn deutlich schneller', () {
+      final r = Router(g, Vehicle.pkw);
+      final viaMain = r.fastest(station(penalty: 600).toStart(g), fichtenweg())!;
+      expect(g.label(viaMain.directedEdges.first >> 1), 'Birkenweg');
+      final st = station(penalty: 0).toStart(g);
+      final viaSide = r.fastest(st, fichtenweg())!;
+      expect(g.label(viaSide.directedEdges.first >> 1), 'Hauptstraße');
+      expect(st.exitLabelFor(viaSide), 'Neben Hauptstraße');
+      expect(viaSide.timeS, lessThan(viaMain.timeS));
+    });
+
+    test('Abbiegeregel „nur rechts“ an der Ausfahrt', () {
+      // Ausfahrt nach Süden auf den Birkenweg: rechts = Richtung Westen
+      final st = StationPoint('FGH', sLat, sLon, exits: [
+        StationExit('Haupt', lat0 + dLat, sLon, main: true, turn: ExitTurn.right),
+      ]).toStart(g);
+      final x = st.exits.single;
+      final east = Router(g, Vehicle.pkw);
+      final r = east.fastest(st, fichtenweg())!;
+      final first = r.directedEdges.first;
+      final fwdBearing = g.startBearing(first);
+      expect(fwdBearing, closeTo(270, 20)); // nach Westen
+      expect(x.forward != x.backward, isTrue);
+    });
+
+    test('Eingabe ab Nebenausfahrt wird erkannt', () {
+      final st = station(penalty: 0).toStart(g);
+      final c = Router(g, Vehicle.pkw)
+          .checkUserRoute(st, fichtenweg(), ['Hauptstraße', 'Gartenstraße', 'Fichtenweg']);
+      expect(c.route, isNotNull);
+      expect(st.exitLabelFor(c.route!), 'Neben Hauptstraße');
+    });
+
+    test('Ausfahrten werden gespeichert', () {
+      final p = Profile('p', 'x')..station = station(penalty: 90, turn: ExitTurn.left);
+      final p2 = Profile.fromJson(jsonDecode(jsonEncode(p.toJson())) as Map<String, dynamic>);
+      expect(p2.station!.exits, hasLength(2));
+      expect(p2.station!.mainExit!.label, 'Haupt Birkenweg');
+      expect(p2.station!.mainExit!.turn, ExitTurn.left);
+      expect(p2.station!.sideExitPenaltySec, 90);
+    });
+  });
+
   test('Straßenziele mit Ortsteil', () {
     final t = gen.next(start, const TrainingOptions(objects: false))!;
     expect(t.target.type, TargetType.street);

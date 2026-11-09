@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../data/osm_service.dart';
+import '../core/router.dart';
 import '../data/profile.dart';
 import 'map_view.dart';
 import 'session.dart';
@@ -30,6 +31,7 @@ class _SetupPageState extends State<SetupPage> {
   double? _progress;
   bool _changedData = false;
   bool _pickOnMap = false;
+  bool _pickExit = false;
   int _fitCounter = 0;
 
   Profile get _p => widget.session.profile;
@@ -203,7 +205,10 @@ class _SetupPageState extends State<SetupPage> {
     var label = _labelCtrl.text.trim();
     if (label.isEmpty) label = fallbackLabel ?? 'Gerätehaus';
     setState(() {
-      _p.station = StationPoint(label, lat, lon);
+      final old = _p.station;
+      _p.station = old == null
+          ? StationPoint(label, lat, lon)
+          : old.copyWith(label: label, lat: lat, lon: lon);
       _addrResults = null;
       _pickOnMap = false;
     });
@@ -214,6 +219,61 @@ class _SetupPageState extends State<SetupPage> {
     } else {
       _snack('Startpunkt gespeichert.');
     }
+  }
+
+  Future<void> _addExit(double lat, double lon) async {
+    final st = _p.station;
+    final g = widget.session.graph;
+    if (st == null || g == null) return;
+    final e = g.nearestEdge(lat, lon);
+    final street = e >= 0 ? (g.label(e) ?? 'Zufahrt') : 'Ausfahrt';
+    final isFirst = st.exits.isEmpty;
+    setState(() {
+      st.exits.add(StationExit(
+          isFirst ? 'Hauptausfahrt $street' : 'Ausfahrt $street', lat, lon,
+          main: isFirst));
+      _pickExit = false;
+    });
+    await widget.session.save();
+    _snack('Ausfahrt auf „$street“ hinzugefügt.');
+  }
+
+  Future<void> _setMainExit(StationExit x) async {
+    setState(() {
+      for (final e in _p.station!.exits) {
+        e.main = identical(e, x);
+      }
+    });
+    await widget.session.save();
+  }
+
+  Future<void> _renameExit(StationExit x) async {
+    final ctrl = TextEditingController(text: x.label);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Ausfahrt benennen'),
+        content: TextField(controller: ctrl, autofocus: true),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Abbrechen')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text),
+              child: const Text('Speichern')),
+        ],
+      ),
+    );
+    if (name == null || name.trim().isEmpty) return;
+    setState(() => x.label = name.trim());
+    await widget.session.save();
+  }
+
+  Future<void> _removeExit(StationExit x) async {
+    final st = _p.station!;
+    setState(() {
+      st.exits.remove(x);
+      if (x.main && st.exits.isNotEmpty) st.exits.first.main = true;
+    });
+    await widget.session.save();
   }
 
   void _setCoords() {
@@ -240,9 +300,17 @@ class _SetupPageState extends State<SetupPage> {
       markers: [
         if (st != null)
           MapMarker(st.lat, st.lon, Colors.red.shade700, st.label, Icons.local_fire_department),
+        if (st != null)
+          for (final x in st.exits)
+            MapMarker(x.lat, x.lon, x.main ? Colors.blue.shade800 : Colors.blueGrey,
+                x.main ? 'Hauptausfahrt' : x.label, Icons.exit_to_app),
       ],
-      onTap: _pickOnMap ? (la, lo) => _setStation(la, lo) : null,
-      tapForNames: !_pickOnMap,
+      onTap: _pickOnMap
+          ? (la, lo) => _setStation(la, lo)
+          : _pickExit
+              ? (la, lo) => _addExit(la, lo)
+              : null,
+      tapForNames: !_pickOnMap && !_pickExit,
       showNames: true,
     );
     final form = ListView(
@@ -253,6 +321,8 @@ class _SetupPageState extends State<SetupPage> {
         _dataSection(context),
         const SizedBox(height: 12),
         _stationSection(context),
+        const SizedBox(height: 12),
+        _exitSection(context),
         if (!wide) ...[
           const SizedBox(height: 12),
           SizedBox(height: 380, child: Card(clipBehavior: Clip.antiAlias, child: map)),
@@ -481,7 +551,10 @@ class _SetupPageState extends State<SetupPage> {
       ]),
       const SizedBox(height: 8),
       OutlinedButton.icon(
-        onPressed: () => setState(() => _pickOnMap = !_pickOnMap),
+        onPressed: () => setState(() {
+          _pickOnMap = !_pickOnMap;
+          _pickExit = false;
+        }),
         icon: Icon(_pickOnMap ? Icons.close : Icons.touch_app_outlined),
         label: Text(_pickOnMap ? 'Auswahl auf Karte abbrechen' : 'Auf der Karte antippen'),
       ),
@@ -494,6 +567,110 @@ class _SetupPageState extends State<SetupPage> {
       Text(st == null
           ? 'Noch kein Startpunkt festgelegt.'
           : 'Aktuell: ${st.label} (${st.lat.toStringAsFixed(5)}, ${st.lon.toStringAsFixed(5)})'),
+    ]);
+  }
+
+  Widget _exitSection(BuildContext context) {
+    final st = _p.station;
+    final g = widget.session.graph;
+    final theme = Theme.of(context);
+    return _section(context, '4. Ausfahrten des Gerätehauses', Icons.exit_to_app, [
+      const Text('Optional: Lege fest, über welche Ausfahrten die Fahrzeuge '
+          'das Gerätehaus verlassen. Die Hauptausfahrt wird in der Regel '
+          'benutzt, Nebenausfahrten nur, wenn sie deutlich schneller sind '
+          '(z. B. bei einer Sperrung).'),
+      const SizedBox(height: 8),
+      if (st == null || g == null)
+        const Text('Zuerst Kartendaten laden und Gerätehaus festlegen.',
+            style: TextStyle(fontStyle: FontStyle.italic))
+      else ...[
+        if (st.exits.isEmpty)
+          const Text('Keine Ausfahrten festgelegt – Start an der nächsten Straße, '
+              'beide Richtungen.',
+              style: TextStyle(fontStyle: FontStyle.italic)),
+        for (final x in st.exits)
+          Card(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            color: x.main ? theme.colorScheme.primaryContainer : null,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  IconButton(
+                    tooltip: x.main ? 'Hauptausfahrt' : 'Als Hauptausfahrt festlegen',
+                    icon: Icon(x.main ? Icons.star : Icons.star_border,
+                        color: x.main ? Colors.amber.shade800 : null),
+                    onPressed: () => _setMainExit(x),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => _renameExit(x),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(x.label, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        Text(x.main ? 'Hauptausfahrt' : 'Nebenausfahrt',
+                            style: theme.textTheme.bodySmall),
+                      ]),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Entfernen',
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => _removeExit(x),
+                  ),
+                ]),
+                Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Row(children: [
+                    const Text('Abbiegen: '),
+                    const SizedBox(width: 8),
+                    DropdownButton<ExitTurn>(
+                      value: x.turn,
+                      isDense: true,
+                      items: [
+                        for (final t in ExitTurn.values)
+                          DropdownMenuItem(value: t, child: Text(t.label)),
+                      ],
+                      onChanged: (t) {
+                        setState(() => x.turn = t!);
+                        widget.session.save();
+                      },
+                    ),
+                  ]),
+                ),
+              ]),
+            ),
+          ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () => setState(() {
+            _pickExit = !_pickExit;
+            _pickOnMap = false;
+          }),
+          icon: Icon(_pickExit ? Icons.close : Icons.add_location_alt_outlined),
+          label: Text(_pickExit ? 'Abbrechen' : 'Ausfahrt auf Karte antippen'),
+        ),
+        if (_pickExit)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text('Tippe in der Karte auf die Stelle, an der die Ausfahrt '
+                'auf die Straße trifft. „Links/rechts“ gilt in Blickrichtung '
+                'beim Herausfahren.'),
+          ),
+        if (st.exits.length > 1) ...[
+          const SizedBox(height: 12),
+          Text('Nebenausfahrt nur nutzen, wenn mindestens '
+              '${st.sideExitPenaltySec} s schneller'),
+          Slider(
+            value: st.sideExitPenaltySec.toDouble(),
+            min: 0,
+            max: 180,
+            divisions: 12,
+            label: '${st.sideExitPenaltySec} s',
+            onChanged: (v) => setState(() => st.sideExitPenaltySec = v.round()),
+            onChangeEnd: (_) => widget.session.save(),
+          ),
+        ],
+      ],
     ]);
   }
 }

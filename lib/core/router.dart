@@ -53,12 +53,111 @@ class _Heap {
   }
 }
 
-/// Startpunkt: eine Kante (man steht "auf" dieser Straße).
-class StartPoint {
+/// Erlaubte Abbiegerichtung beim Verlassen einer Ausfahrt.
+enum ExitTurn { both, right, left }
+
+extension ExitTurnLabel on ExitTurn {
+  String get label => switch (this) {
+        ExitTurn.both => 'links und rechts',
+        ExitTurn.right => 'nur rechts',
+        ExitTurn.left => 'nur links',
+      };
+}
+
+/// Eine Ausfahrt des Startpunkts (z. B. Haupt- oder Nebenausfahrt des
+/// Gerätehauses).
+class StartExit {
+  final String label;
   final int edge;
+  final bool forward; // darf in Digitalisierungsrichtung fahren
+  final bool backward; // darf entgegen fahren
+  final double penaltyS; // Zuschlag (Nebenausfahrten)
+  final double forwardTurnS, backwardTurnS; // Abbiegezeit beim Ausfahren
+  final double lat, lon;
+  final bool main;
+
+  StartExit({
+    required this.label,
+    required this.edge,
+    this.forward = true,
+    this.backward = true,
+    this.penaltyS = 0,
+    this.forwardTurnS = 0,
+    this.backwardTurnS = 0,
+    required this.lat,
+    required this.lon,
+    this.main = false,
+  });
+
+  /// Erzeugt eine Ausfahrt aus Koordinaten. Die Abbiegerichtung wird aus der
+  /// Lage der Ausfahrt relativ zum Gebäude bestimmt.
+  factory StartExit.at(RoadGraph g,
+      {required String label,
+      required double stationLat,
+      required double stationLon,
+      required double lat,
+      required double lon,
+      ExitTurn turn = ExitTurn.both,
+      double penaltyS = 0,
+      bool main = false}) {
+    final e = g.nearestEdge(lat, lon);
+    var fwd = true, back = true;
+    double fwdTurn = 0, backTurn = 0;
+    final outDist = distanceM(stationLat, stationLon, lat, lon);
+    if (e >= 0 && outDist > 3) {
+      final out = bearingDeg(stationLat, stationLon, lat, lon);
+      final road = g.bearingNear(e, lat, lon);
+      final a = angleDiff(out, road); // > 0: vorwärts = rechts abbiegen
+      final fwdIsRight = a > 0;
+      fwdTurn = fwdIsRight ? 6 : 10;
+      backTurn = fwdIsRight ? 10 : 6;
+      if (turn == ExitTurn.right) {
+        fwd = fwdIsRight;
+        back = !fwdIsRight;
+      } else if (turn == ExitTurn.left) {
+        fwd = !fwdIsRight;
+        back = fwdIsRight;
+      }
+    }
+    return StartExit(
+      label: label,
+      edge: e,
+      forward: fwd,
+      backward: back,
+      penaltyS: penaltyS,
+      forwardTurnS: fwdTurn,
+      backwardTurnS: backTurn,
+      lat: lat,
+      lon: lon,
+      main: main,
+    );
+  }
+}
+
+/// Startpunkt: eine Kante (man steht "auf" dieser Straße) oder mehrere
+/// Ausfahrten.
+class StartPoint {
+  final int edge; // Hauptkante (bei Ausfahrten: die der Hauptausfahrt)
   final double lat, lon;
   final String label;
-  StartPoint(this.edge, this.lat, this.lon, this.label);
+  final List<StartExit> exits;
+  StartPoint(this.edge, this.lat, this.lon, this.label,
+      {this.exits = const []});
+
+  /// Alle Kanten, auf denen man startet.
+  Set<int> get edges => exits.isEmpty ? {edge} : {for (final x in exits) x.edge};
+
+  /// Name der Ausfahrt, über die eine Route beginnt (oder null).
+  String? exitLabelFor(RouteResult r) {
+    if (exits.length < 2 || r.directedEdges.isEmpty) return null;
+    final d = r.directedEdges.first;
+    StartExit? best;
+    for (final x in exits) {
+      if (x.edge != d >> 1) continue;
+      if (best == null || x.penaltyS < best.penaltyS) best = x;
+    }
+    return best?.label;
+  }
 }
 
 enum TargetType { object, street }
@@ -195,11 +294,23 @@ class Router {
     return abs <= 135 ? 10 : 15; // links
   }
 
-  Iterable<int> _startStates(StartPoint s) sync* {
-    final e = s.edge;
-    if (!g.allowed(e, vehicle)) return;
-    yield e * 2;
-    if (g.eOneway[e] == 0) yield e * 2 + 1;
+  /// Start-Zustände (gerichtete Kante, Anfangskosten).
+  Iterable<(int, double)> _startStates(StartPoint s) sync* {
+    if (s.exits.isEmpty) {
+      final e = s.edge;
+      if (!g.allowed(e, vehicle)) return;
+      final c = edgeTime(e) * 0.5;
+      yield (e * 2, c);
+      if (g.eOneway[e] == 0) yield (e * 2 + 1, c);
+      return;
+    }
+    for (final x in s.exits) {
+      final e = x.edge;
+      if (e < 0 || !usable(e)) continue;
+      final c = edgeTime(e) * 0.5 + x.penaltyS;
+      if (x.forward) yield (e * 2, c + x.forwardTurnS);
+      if (x.backward && g.eOneway[e] == 0) yield (e * 2 + 1, c + x.backwardTurnS);
+    }
   }
 
   /// Ziel erreicht, sobald man in die Zielstraße bzw. das Straßenstück
@@ -212,10 +323,11 @@ class Router {
     final dist = Float64List(n)..fillRange(0, n, double.infinity);
     final prev = Int32List(n)..fillRange(0, n, -1);
     final heap = _Heap();
-    for (final d in _startStates(start)) {
-      final c = edgeTime(d >> 1) * 0.5;
-      dist[d] = c;
-      heap.push(c, d);
+    for (final (d, c) in _startStates(start)) {
+      if (c < dist[d]) {
+        dist[d] = c;
+        heap.push(c, d);
+      }
     }
     while (!heap.isEmpty) {
       final (c, d) = heap.pop();
@@ -309,8 +421,10 @@ class Router {
     final opts = <String>{};
     final currentKeys = streets.isEmpty ? <String>{} : {normalizeStreet(streets.last)};
     if (streets.isEmpty) {
-      final l = g.label(start.edge);
-      if (l != null) opts.add(l);
+      for (final se in start.edges) {
+        final l = se < 0 ? null : g.label(se);
+        if (l != null) opts.add(l);
+      }
     }
     final visitedNodes = <int>{};
     void collect(int node, int depth) {
@@ -341,11 +455,20 @@ class Router {
     bool matches(int e, int i) =>
         nameSets[i].contains(g.eName[e]) || refSets[i].contains(g.eRef[e]);
 
-    final se = start.edge;
-    // Auf der Straße des Startpunkts darf man ohne Eingabe weiterfahren.
+    // Auf der Straße des Startpunkts (bzw. der Ausfahrten) darf man ohne
+    // Eingabe weiterfahren.
+    final startNames = <int>{}, startRefs = <int>{};
+    for (final se in start.edges) {
+      if (se < 0) continue;
+      if (g.eName[se] >= 0) {
+        startNames.add(g.eName[se]);
+      } else if (g.eRef[se] >= 0) {
+        startRefs.add(g.eRef[se]);
+      }
+    }
     bool sameAsStart(int e) =>
-        (g.eName[se] >= 0 && g.eName[e] == g.eName[se]) ||
-        (g.eName[se] < 0 && g.eRef[se] >= 0 && g.eRef[e] == g.eRef[se]);
+        (g.eName[e] >= 0 && startNames.contains(g.eName[e])) ||
+        (g.eName[e] < 0 && g.eRef[e] >= 0 && startRefs.contains(g.eRef[e]));
     final dist = <int, double>{};
     final prev = <int, int>{};
     final heap = _Heap();
@@ -359,8 +482,7 @@ class Router {
       }
     }
 
-    for (final d in _startStates(start)) {
-      final c = edgeTime(d >> 1) * 0.5;
+    for (final (d, c) in _startStates(start)) {
       // Die Startstraße gilt als befahren, wenn sie der ersten Eingabe
       // entspricht; andernfalls darf man von ihr auf die erste Straße abbiegen.
       push(d * (n + 1) + 0, c, -1);
@@ -414,10 +536,11 @@ class Router {
     final n = g.edgeCount * 2;
     final dist = Float64List(n)..fillRange(0, n, double.infinity);
     final heap = _Heap();
-    for (final d in _startStates(start)) {
-      final c = edgeTime(d >> 1) * 0.5;
-      dist[d] = c;
-      heap.push(c, d);
+    for (final (d, c) in _startStates(start)) {
+      if (c < dist[d]) {
+        dist[d] = c;
+        heap.push(c, d);
+      }
     }
     while (!heap.isEmpty) {
       final (c, d) = heap.pop();
