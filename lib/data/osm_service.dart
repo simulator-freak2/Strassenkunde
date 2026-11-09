@@ -13,10 +13,13 @@ import 'storage.dart';
 
 const _userAgent = 'Strassenkunde-Lernapp/1.0 (Ortskunde-Trainer Feuerwehr)';
 const _nominatim = 'https://nominatim.openstreetmap.org/search';
+// Mehrere öffentliche Overpass-Server: ist einer überlastet (HTTP 502/504/429),
+// wird automatisch der nächste versucht.
 const _overpassEndpoints = [
   'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
 ];
 
 class AddressResult {
@@ -131,7 +134,7 @@ class OsmService {
   static String _tileQuery(BBox b) {
     final bb = '${b.south},${b.west},${b.north},${b.east}';
     return '''
-[out:json][timeout:240][maxsize:1073741824];
+[out:json][timeout:180];
 way["highway"~"^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service|road|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link)\$"]($bb)->.roads;
 .roads out body;
 .roads >;
@@ -149,33 +152,47 @@ out center;
 
   Future<String> _overpass(String query, void Function(String) status) async {
     Object? lastError;
-    for (var attempt = 0; attempt < 6; attempt++) {
-      final endpoint = _overpassEndpoints[attempt % _overpassEndpoints.length];
+    const rounds = 4;
+    final n = _overpassEndpoints.length;
+    for (var attempt = 0; attempt < rounds * n; attempt++) {
+      final endpoint = _overpassEndpoints[attempt % n];
+      final host = Uri.parse(endpoint).host;
       try {
         final res = await _client
             .post(Uri.parse(endpoint),
                 headers: {'User-Agent': _userAgent},
                 body: {'data': query})
-            .timeout(const Duration(minutes: 5));
-        final body = utf8.decode(res.bodyBytes);
-        if (res.statusCode == 200 && !body.contains('"remark": "runtime error')) {
-          return body;
-        }
-        lastError = 'HTTP ${res.statusCode}';
+            .timeout(const Duration(minutes: 4));
+        final body = utf8.decode(res.bodyBytes, allowMalformed: true);
+        final ok = res.statusCode == 200 &&
+            body.trimLeft().startsWith('{') &&
+            !body.contains('"remark": "runtime error') &&
+            !body.contains('"remark": "runtime remark');
+        if (ok) return body;
+        lastError = res.statusCode == 200
+            ? 'Server-Fehler'
+            : 'HTTP ${res.statusCode}';
       } on SocketException catch (e) {
         lastError = e.message;
       } on TimeoutException {
         lastError = 'Zeitüberschreitung';
       } on http.ClientException catch (e) {
         lastError = e.message;
+      } on HandshakeException catch (e) {
+        lastError = e.message;
       }
-      final wait = Duration(seconds: 5 * (attempt + 1));
-      status('Server ausgelastet ($lastError) – neuer Versuch in '
-          '${wait.inSeconds} s …');
+      // Erst alle Server kurz nacheinander probieren, danach länger warten.
+      final round = attempt ~/ n;
+      final last = attempt % n == n - 1;
+      final wait = Duration(seconds: last ? 20 * (round + 1) : 3);
+      if (attempt == rounds * n - 1) break;
+      status('$host antwortet nicht ($lastError) – '
+          '${last ? 'alle Server ausgelastet, warte ${wait.inSeconds} s' : 'versuche anderen Server'} …');
       await Future<void>.delayed(wait);
     }
-    throw OsmException('Download fehlgeschlagen: $lastError. '
-        'Bitte später erneut versuchen.');
+    throw OsmException('Download fehlgeschlagen ($lastError). Die Kartenserver '
+        'sind gerade überlastet – bitte später erneut auf „Daten herunterladen“ '
+        'tippen. Bereits geladene Teile werden dann übersprungen.');
   }
 
   /// Lädt Straßen und Objekte des Profil-Gebiets und speichert die
@@ -188,21 +205,31 @@ out center;
     if (profile.areas.isEmpty) throw OsmException('Kein Gebiet gewählt.');
     final rings = [for (final a in profile.areas) ...a.rings];
     final areaBox = AreaPolygon(rings).bbox.expanded(profile.bufferM);
-    final tiles = areaBox.tiles(0.1);
+    final tiles = areaBox.tiles(0.05);
     final dir = storage.downloadDir(profile);
-    if (await dir.exists()) await dir.delete(recursive: true);
+    // Abgebrochenen Download fortsetzen, wenn Gebiet unverändert ist.
+    final sigFile = File(p.join(dir.path, 'gebiet.txt'));
+    final sig = '${profile.areaSignature()}|${tiles.length}|v2';
+    if (await dir.exists() &&
+        (!await sigFile.exists() || await sigFile.readAsString() != sig)) {
+      await dir.delete(recursive: true);
+    }
     await dir.create(recursive: true);
+    await sigFile.writeAsString(sig);
     final files = <String>[];
     for (var i = 0; i < tiles.length; i++) {
-      onProgress('Lade Kartendaten (Teil ${i + 1} von ${tiles.length}) …',
-          i / (tiles.length + 1));
-      final body = await _overpass(
-          _tileQuery(tiles[i]), (s) => onProgress(s, i / (tiles.length + 1)));
       final f = File(p.join(dir.path, 'teil_$i.json'));
-      await f.writeAsString(body);
       files.add(f.path);
+      if (await f.exists() && await f.length() > 0) continue;
+      final pr = i / (tiles.length + 1);
+      onProgress('Lade Kartendaten (Teil ${i + 1} von ${tiles.length}) …', pr);
+      final body = await _overpass(_tileQuery(tiles[i]),
+          (s) => onProgress('Teil ${i + 1} von ${tiles.length}: $s', pr));
+      final tmp = File('${f.path}.tmp');
+      await tmp.writeAsString(body);
+      await tmp.rename(f.path);
       if (i < tiles.length - 1) {
-        await Future<void>.delayed(const Duration(seconds: 2));
+        await Future<void>.delayed(const Duration(seconds: 1));
       }
     }
     onProgress('Verarbeite Straßennetz …', tiles.length / (tiles.length + 1));
