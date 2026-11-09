@@ -32,6 +32,22 @@ Läuft offline auf **Windows (portabel, auch vom USB-Stick)** und **Android**.
 8. **Auswertung**: eigene Route vs. schnellste Route, Zeitdifferenz, Kartenvergleich.
 9. **Statistik/Lernfortschritt**: welche Straßen/Objekte sicher sitzen, schwache Ziele öfter abfragen.
 
+## Entscheidungen (Antworten auf die Rückfragen)
+
+| Thema | Entscheidung |
+|---|---|
+| Datenquelle | OpenStreetMap (Straßen und Objekte) |
+| Objekte | Hotels, Schulen, Alten-/Pflegeheime, Krankenhäuser |
+| Gebiet & Gerätehaus | werden in der App festgelegt (Stadtteil/e, Stadt, Verbandsgemeinde, Landkreis; Adresse oder Koordinaten) |
+| Sonderrechte | vorerst nicht berücksichtigt (Einbahnstraßen gelten) |
+| Fahrzeug | PKW oder LKW (wählbar) |
+| Toleranz | eingegebene Route darf 2 Minuten länger dauern (einstellbar) |
+| Eingabe | Texteingabe der Straßenfolge mit Autovervollständigung |
+| Sperrungen | von der App generiert (Stufe 1 relevant, Stufe 2 + irrelevant) |
+| Prüfung | 5 Straßen/Objekte nacheinander |
+| Profile | bis zu 5 pro Gerät |
+| Zielsysteme | Windows 11 (portabel/USB), Android 16 (APK) |
+
 ## Phasen
 
 1. **Grundgerüst**: Flutter-Projekt, CI-Builds (Windows-ZIP, APK), portabler Modus.
@@ -40,3 +56,6 @@ Läuft offline auf **Windows (portabel, auch vom USB-Stick)** und **Android**.
 4. **Lernmodi**: leicht + schwer, Eingabe mit Autovervollständigung, Auswertung.
 5. **Prüfungsmodus** + Protokolle.
 6. **Feinschliff**: Statistik, Einstellungen, Test mit echtem Ort, Anleitung (USB-Stick, APK-Installation).
+
+**Stand:** Phasen 1–5 umgesetzt, Phase 6 bis auf den Praxistest mit einem
+echten Ort erledigt (siehe `docs/ANLEITUNG.md`).
